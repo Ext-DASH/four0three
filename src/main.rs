@@ -1,12 +1,7 @@
 use clap::Parser;
-use clap::Command;
-use httparse::Response;
-use regex::Match;
-use std::path::PathBuf;
-use std::str::Split;
-use httparse;
 use reqwest;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
+use std::alloc::System;
 use std::sync::Arc;
 use tokio::sync::Semaphore;
 use regex::Regex;
@@ -148,7 +143,11 @@ async fn build_and_send_request_packet(req: &ParsedRequest, head: String, value:
                 .unwrap_or_default();
             
             //TODO: PROTO CHANGE
-    let url = format!("http://{}{}", host, req.url);
+    let mut proto = "https";
+    if insecure {
+        proto  = "http";
+    }
+    let url = format!("{}://{}{}", proto, host, req.url);
     let mut request_builder = client
         .request(reqwest::Method::from_bytes(req.method.as_bytes()).unwrap(), &url)
         .headers(header_map);
@@ -161,7 +160,7 @@ async fn build_and_send_request_packet(req: &ParsedRequest, head: String, value:
         .await
         .unwrap();
     
-    Some((response, format!("http://{}{}", host, req.url)))
+    Some((response, format!("{}://{}{}", proto, host, req.url)))
     
 }
 
@@ -269,11 +268,15 @@ async fn mutate_request(req: ParsedRequest, resolved_payloads: Arc<ResolvedPaylo
 }
 
 //TODO: needs alot
-fn print_init_and_status(req: &ParsedRequest, args: &Args) {
+async fn print_init_and_status(req: &ParsedRequest, args: &Args) {
     //initialization:
     let threads = args.threads;
     let insecure = args.insecure.to_string();
     let queue = args.queue_size;
+    let mut proto = "https";
+    if args.insecure {
+        proto = "http";
+    }
     let mut proxy = !args.burp.is_none();
     let mut proxy = proxy.to_string();
     let host = req.headers.iter().find(|(key, _)| key == "Host")
@@ -281,7 +284,7 @@ fn print_init_and_status(req: &ParsedRequest, args: &Args) {
                 .unwrap_or_default();
             
             //TODO: PROTO CHANGE
-    let target = format!("http://{}{}", host, req.url);
+    let target = format!("{}://{}{}", proto, host, req.url);
     let rate = args.rate_limit;
     // let filter = &args.status_codes;
 
@@ -305,6 +308,14 @@ Proxy:               │ {proxy}
 Response Filer:      | 200 OK
 ──────────────────────────────────────────────────────────────
 "#);
+    println!("Checking status of host...");
+    let res = match reqwest::get(target).await {
+        Ok(r) => println!("{}", "[+] Host is active.".green()),
+        Err(e) => {
+            println!("{}", "[-] Host is not active, exiting...".red());
+            std::process::exit(1);
+        }
+    };
 }
 
 #[tokio::main]
@@ -345,7 +356,7 @@ async fn main() {
 
         let parsed = ParsedRequest{method: method.to_string(), url: url.to_string(), proto: proto.to_string(), headers: headers_vec, body: body.to_string()};
         //print status and initialization and test connection
-        print_init_and_status(&parsed, &args);
+        print_init_and_status(&parsed, &args).await;
         let finalized_payloads = Arc::new(handle_extra_payloads(&args.oob_payload, &args.oob_domain_payload, &args.extra_header_payloads, &args.extra_ip_payloads, &args.extra_header_payloads, url.to_string())).clone();
         
         //calc number of requests
