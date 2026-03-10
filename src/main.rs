@@ -1,5 +1,7 @@
 use clap::Parser;
 use clap::Command;
+use httparse::Response;
+use regex::Match;
 use std::path::PathBuf;
 use std::str::Split;
 use httparse;
@@ -9,6 +11,8 @@ use std::sync::Arc;
 use tokio::sync::Semaphore;
 use regex::Regex;
 use std::io;
+use indicatif::{ProgressBar, ProgressStyle};
+use colored::Colorize;
 
 mod payloads;
 mod args;
@@ -43,7 +47,7 @@ fn pause() {
 }
 
 //TODO: FINISH FUNCTION THAT ADDS USER SUPPLIED PAYLOADS TO PAYLOAD LISTS.
-fn handle_extra_payloads(oob_payload: Option<String>, oob_domain: Option<String>, extra_header: Option<String>, extra_ip: Option<String>, extra_url: Option<String>, req_path: String) -> ResolvedPayloads {
+fn handle_extra_payloads(oob_payload: &Option<String>, oob_domain: &Option<String>, extra_header: &Option<String>, extra_ip: &Option<String>, extra_url: &Option<String>, url: String) -> ResolvedPayloads {
     let mut oob_payloads: Vec<String> = payloads::OOB_PAYLOADS.iter().map(|s| s.to_string()).collect();
     let mut oob_domains: Vec<String> = payloads::OOB_DOMAIN_PAYLOADS.iter().map(|s| s.to_string()).collect();
     let mut header_payloads: Vec<String> = payloads::HEADER_TEMPLATES.iter().map(|s| s.to_string()).collect();
@@ -51,8 +55,8 @@ fn handle_extra_payloads(oob_payload: Option<String>, oob_domain: Option<String>
     let mut url_payloads: Vec<String> = payloads::URL_PAYLOADS.iter().map(|s| s.to_string()).collect();
     let mut path_payload: Vec<String> = payloads::PATH_PAYLOAD.iter().map(|s| s.to_string()).collect();
     let mut whitespace_payloads: Vec<String> = payloads::WHITESPACE_PAYLOADS.iter().map(|s| s.to_string()).collect();
-
-    path_payload.push(req_path);
+    
+    path_payload.push(url);
 
     if let Some(extra) =  oob_payload {
         oob_payloads.push(extra.to_string());
@@ -98,23 +102,55 @@ fn get_payload_list<'a>(header: &str, payloads: &'a ResolvedPayloads) -> Option<
     }
 }
 
-async fn build_and_send_request_packet(req: &ParsedRequest) {
+async fn build_and_send_request_packet(req: &ParsedRequest, head: String, value: String, proxy: Option<String>, insecure: bool) -> Option<(reqwest::Response, String)> {
     
     let mut client = reqwest::Client::builder()
-        .danger_accept_invalid_certs(true)
-        .proxy(reqwest::Proxy::all("http://127.0.0.1:8080").unwrap())
-        .build()
-        .unwrap();
-    
+        .danger_accept_invalid_certs(insecure);
+    if let Some(proxy_url) = proxy {
+        client = client.proxy(reqwest::Proxy::all(&proxy_url).unwrap());
+    } 
+    let client = client.build().unwrap();
+
     let mut header_map = HeaderMap::new();
+    
     for (key, value) in &req.headers {
-        let header_name = HeaderName::from_bytes(key.as_bytes()).unwrap();
-        let header_value = HeaderValue::from_str(value).unwrap();
+        let header_name = match HeaderName::from_bytes(key.as_bytes()) {
+            Ok(name) => name,
+            Err(e) => {
+                print!("Invalid Header: {}: {}", key, value);
+                continue;
+            }
+        };
+        
+        let header_value = match HeaderValue::from_str(value) {
+            Ok(val) => val,
+            Err(e) => {
+                print!("Invalid Header: {}: {}", key, value);
+                continue;
+            }
+        };
+        
+        
         header_map.insert(header_name, header_value);
     }
+    let header_name = match HeaderName::from_bytes(head.as_bytes()) {
+        Ok(val) => val,
+        Err(e) => {
+            println!("Invalid header name: {}", head);
+            return None;
+            
+        }
+    };
+    header_map.insert(HeaderName::from_bytes(head.as_bytes()).unwrap(), HeaderValue::from_str(&value).unwrap()); 
     // add all headers
+    let host = req.headers.iter().find(|(key, _)| key == "Host")
+                .map(|(_, value)| value.clone())
+                .unwrap_or_default();
+            
+            //TODO: PROTO CHANGE
+    let url = format!("http://{}{}", host, req.url);
     let mut request_builder = client
-        .request(reqwest::Method::from_bytes(req.method.as_bytes()).unwrap(), &req.url)
+        .request(reqwest::Method::from_bytes(req.method.as_bytes()).unwrap(), &url)
         .headers(header_map);
     
     
@@ -125,115 +161,181 @@ async fn build_and_send_request_packet(req: &ParsedRequest) {
         .await
         .unwrap();
     
-    println!("{} {} {} {:#?}", req.method, req.url, response.status(), req);
-    pause();
-    
+    Some((response, format!("http://{}{}", host, req.url)))
     
 }
 
-async fn mutate_request(req: ParsedRequest, rate_limit: u8, queue_size: u16, threads: u8, resolved_payloads: Arc<ResolvedPayloads>) {
+async fn mutate_request(req: ParsedRequest, resolved_payloads: Arc<ResolvedPayloads>, args: &Args, pb: Arc<ProgressBar>) {
     //rate_limit implementation
-    let semaphore = Arc::new(Semaphore::new(rate_limit as usize));
+    let semaphore = Arc::new(Semaphore::new(args.rate_limit as usize));
     
     //tokio channel with queue
     //TODO: TEST QUEUE_SIZE AND DETERMINE MAX
     //TODO: IMPLEMENT MAX CHECK
-    let (tx, rx) = tokio::sync::mpsc::channel::<String>(queue_size as usize);
+    let (tx, rx) = tokio::sync::mpsc::channel::<String>(args.queue_size as usize);
     let arc_req = Arc::new(req);
     let rx = Arc::new(tokio::sync::Mutex::new(rx));
     let mut handles = vec![];
+    let proxy = args.burp.clone();
+    let insecure = args.insecure;
+    let mut errors = 0;
 
-    for _ in 0..threads {
+    for _ in 0..args.threads {
         let rx = rx.clone();
         let sem = semaphore.clone();
-        let request = arc_req.clone();
+        let mut request = arc_req.clone();
         
-        let payloads = resolved_payloads.clone();
-
+        let pb = pb.clone();
+        let proxy = proxy.clone();
+        let insecure = insecure.clone();
+        
         let handle = tokio::spawn(async move {
-            let mut req = (*request).clone();
-            let host = req.headers.iter().find(|(key, _)| key == "Host")
-                .map(|(_, value)| value.clone())
-                .unwrap_or_default();
+            let mut join_set = tokio::task::JoinSet::new();
+            loop {
+                let item = rx.lock().await.recv().await;
+                match item {
+                    Some(payload) => {
 
-            req.url = format!("https://{}{}", host, req.url);
+                        let sem = sem.clone();
+                        let request = request.clone();
+                        let pb = pb.clone();
+                        let proxy = proxy.clone();
 
-            let re = Regex::new(r"\{[^}]+\}").unwrap();
-            for header in payloads::HEADER_TEMPLATES {
-                //parse header for {PAYLOAD TYPE}
-                
-                let has_type = re.is_match(header);
-                if has_type {
-                    //parse and match type.
-                    if let Some((key, value)) = header.split_once(": ") {
-                        if let Some(payload_list) = get_payload_list(header, &payloads) {
-                            
-                            for item in payload_list {
-                                req.headers.push((key.to_string(), item.to_string()));
-                                build_and_send_request_packet(&req).await;
-                                req.headers.pop();
+                        join_set.spawn(async move {
+
+                            let _permit = sem.acquire().await.unwrap();
+                            let mut payload_split = payload.split("|||");
+                            let head = payload_split.next().unwrap().to_string();
+                            let value = payload_split.next().unwrap().to_string();
+                            if let Some(response) = build_and_send_request_packet(&request, head.clone(), value.clone(), proxy.clone(), insecure).await {
+                                pb.inc(1);
+                                let res_status = response.0.status().to_string();
+                                //res_status.match
+                                if res_status.eq("200 OK") {
+                                    pb.println(format!("{} {} ({}: {})", "[200]".green(), response.1.cyan(), head.yellow(), value.yellow()));
+                                } 
                             }
-                            
-                            
-                        }
-                    } else {
-                        print!("Header payload has no matching list: {header}");
+                        });
                     }
-                } else {
-                    //if no payload template type then:
-                        //header should have value, confirm header has value
-                            //if not, just log this for now, all should have a value, but user supplied might not.
-                            //if it does, modify a request with it
-                    if let Some((key, value)) = header.split_once(": ") {
-                        
-                        req.headers.push((key.to_string(), value.to_string()));
-                        //TODO: build request and send
-                        // println!("req slice from no payload: {:#?}", &req);
-                        // pause();
-                        build_and_send_request_packet(&req).await; 
-                        req.headers.pop();
-                        
-                    } else {
-                        print!("Header has no value: {header}");
-                    }
-                    
+                    None => break,
                 }
-                   
+            }
+            while let Some(result) = join_set.join_next().await {
+                if let Err(e) = result {
+                    eprintln!("Error: {}", e);
+                }
             }
         });
         handles.push(handle);
         
     }
+
+    let re = Regex::new(r"\{[^}]+\}").unwrap();
+    for header in payloads::HEADER_TEMPLATES {
+        //parse header for {PAYLOAD TYPE}
+        
+        let has_type = re.is_match(header);
+        if has_type {
+            //parse and match type.
+            if let Some((key, value)) = header.split_once(": ") {
+                if let Some(payload_list) = get_payload_list(header, &resolved_payloads) {
+                    
+                    for item in payload_list {
+                        tx.send(format!("{}|||{}", key, item)).await.unwrap();
+                        
+                    }
+                } else {
+                    tx.send(header.to_string()).await.unwrap();
+                }
+            } else {
+                print!("Header payload has no matching list: {header}");
+            }
+        } else {
+            if let Some((key, value)) = header.split_once(": ") {
+                tx.send(format!("{}|||{}", key, value)).await.unwrap();
+            } else {
+                print!("Header has no value: {header}");
+            }
+        }
+    }
+    drop(tx);
     for handle in handles {
-        handle.await.unwrap();
+        match handle.await {
+            Ok(_) => {},
+            Err(e) => println!("{} {}", "Tash error:".red(), e)
+        }
     } 
 
+}
+
+//TODO: needs alot
+fn print_init_and_status(req: &ParsedRequest, args: &Args) {
+    //initialization:
+    let threads = args.threads;
+    let insecure = args.insecure.to_string();
+    let queue = args.queue_size;
+    let mut proxy = !args.burp.is_none();
+    let mut proxy = proxy.to_string();
+    let host = req.headers.iter().find(|(key, _)| key == "Host")
+                .map(|(_, value)| value.clone())
+                .unwrap_or_default();
+            
+            //TODO: PROTO CHANGE
+    let target = format!("http://{}{}", host, req.url);
+    let rate = args.rate_limit;
+    // let filter = &args.status_codes;
+
+    println!(r#"
+  __                        ___   _    _                    
+ / _|  ___   _   _  _ ___  / _ \ | |_ | |__   _ ___   ___  ___
+| |_  / _ \ | | | || '_  || | | || __|| '_ \ | '_  | / _ \/ _ \
+|  _|| | | || | | || | |_|| ||| || |  | | | || | |_|| ___| ___/
+| |  | |_| || |_| || |    | |_| || |_ | | | || |    | \__| \__
+|_|   \___/  \__,_||_|     \___/  \__||_| |_||_|     \___\\___\
+ver 1.0        ExtDASH https://github.com/Ext-DASH/four0three/
+Based on BypassFuzzer.py but written in rust.
+Payload credits:        intrudier https://github.com/intrudir/
+──────────────────────────────────────────────────────────────
+Target:              │ {target}
+Threads:             │ {threads}
+Insecure:            │ {insecure}
+Max Queue Size:      │ {queue}
+Rate Limit:          | {rate}
+Proxy:               │ {proxy}
+Response Filer:      | 200 OK
+──────────────────────────────────────────────────────────────
+"#);
 }
 
 #[tokio::main]
 async fn main() {
     let args = Args::parse();
-    let file_path_buf = args.request;
+    let file_path_buf = &args.request;
 
     //check if file exists
-    if (file_path_buf.exists()) {
+    if file_path_buf.exists() {
         //get request file contents and process
         let raw = std::fs::read_to_string(file_path_buf).unwrap();
-        let raw = raw.replace("\r\n", "\n");
-        let mut parts = raw.splitn(2, "\n\n");
+        
+        let raw = raw.replace("\r\n", "\n").replace("\r", "\n");
+        
+        let mut parts = raw.splitn(2, "\r");
 
         let head = parts.next().unwrap();
         let body = parts.next().unwrap_or("");
-
+        
+        
         let mut head_split: Vec<&str> = head.split("\n").collect();
         let mut first_line_parts = head_split.remove(0).split_whitespace();
 
         let method = first_line_parts.next().unwrap();
         let url = first_line_parts.next().unwrap();
+        
         let proto = first_line_parts.next().unwrap();
         let mut headers_vec: Vec<(String, String)> = Vec::new();
-        
-        for header in head_split {
+
+
+        for header in head_split.iter().filter(|h| !h.is_empty()) {
             let mut header_split = header.split(": ");
             let h = header_split.next().unwrap();
             let v = header_split.next().unwrap();
@@ -242,13 +344,67 @@ async fn main() {
         }
 
         let parsed = ParsedRequest{method: method.to_string(), url: url.to_string(), proto: proto.to_string(), headers: headers_vec, body: body.to_string()};
+        //print status and initialization and test connection
+        print_init_and_status(&parsed, &args);
+        let finalized_payloads = Arc::new(handle_extra_payloads(&args.oob_payload, &args.oob_domain_payload, &args.extra_header_payloads, &args.extra_ip_payloads, &args.extra_header_payloads, url.to_string())).clone();
+        
+        //calc number of requests
+        //TODO: tamper counts
+        let re = Regex::new(r"\{[^}]+\}").unwrap();
+        let mut total = 0;
+        let mut ip_template_count = 0;
+        let mut oob_domain_template_count = 0;
+        let mut oob_template_count = 0;
+        let mut url_template_count = 0;
+        let mut whitespace_template_count = 0;
+        let mut path_template_count = 0;
+        let mut no_template_count = 0;
+        for h in &finalized_payloads.headers {
+            if let Some(matched) = re.find(&h) {
+                let template = matched.as_str();
+                if template.contains("URL") {
+                    url_template_count += 1;
+                    
+                } else if template.contains("IP") {
+                    ip_template_count += 1;
+                    
+                } else if template.contains("OOB PAYLOAD") {
+                    oob_template_count += 1;
+                    
+                } else if template.contains("OOB DOMAIN PAYLOAD") {
+                    oob_domain_template_count += 1;
+                    
+                } else if template.contains("PATH") {
+                    path_template_count += 1;
+                    
+                } else if template.contains("WHITESPACE") {
+                    whitespace_template_count += 1;
+                    
+                }
+            } else {
+                no_template_count += 1;
+            }
+        }
+        url_template_count = url_template_count * &finalized_payloads.url_payloads.len();
+        ip_template_count = ip_template_count * &finalized_payloads.ip_payloads.len();
+        oob_template_count = oob_template_count * &finalized_payloads.oob_payloads.len();
+        oob_domain_template_count = oob_domain_template_count * &finalized_payloads.oob_domain_payloads.len();
+        path_template_count = path_template_count * &finalized_payloads.path_payload.len();
+        whitespace_template_count = whitespace_template_count * &finalized_payloads.whitespace_payloads.len();
 
-        let finalized_payloads = Arc::new(handle_extra_payloads(args.oob_payload, args.oob_domain_payload, args.extra_header_payloads, args.extra_ip_payloads, args.extra_url_payloads, url.to_string()));
-        // print!("{:#?}", finalized_payloads);
-        mutate_request(parsed, args.rate_limit, args.queue_size, args.threads, finalized_payloads).await;
+           
+        total = url_template_count + ip_template_count + oob_domain_template_count + oob_template_count + path_template_count + whitespace_template_count + no_template_count;
+        
+        let pb = Arc::new(ProgressBar::new(total as u64));
+        pb.set_style(ProgressStyle::default_bar()
+            .template("{spinner:.green} [{elapsed_precise}] [{bar:40.cyan/blue}] {pos}/{len} ({eta})")
+            .unwrap()
+            .progress_chars("#>-"));
+
+        mutate_request(parsed, finalized_payloads, &args, pb).await;
 
     } else {
-        println!("Error: {}", "The specified file does not exist, please ensure the file exists.");
+        println!("Error: The specified file does not exist, please ensure the file exists.");
         std::process::exit(1);
     } 
 }

@@ -5,7 +5,9 @@ edition = "2024"
 
 [dependencies]
 clap = {version = "4.5.60", features = ["derive"]}
+colored = "3.1.1"
 httparse = "1.10.1"
+indicatif = "0.18.4"
 regex = "1.12.3"
 reqwest = "0.13.2"
 tokio = {version = "1.50.0", features = ["full"]}
