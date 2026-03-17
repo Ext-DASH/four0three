@@ -9,7 +9,7 @@ credits: intrudier https://github.com/intrudir/
 Options:
   -r, --request <REQUEST>                  Path to request file.
       --scheme-override <SCHEME_OVERRIDE>  URL scheme to use, 'http', 'https'.
-  -u, --url <URL>                          URL scheme to use, 'http', 'https'.
+  -u, --url <URL>                          URL to fuzz.
   -X, --method <METHOD>                    Method to use with the request URL.
   -d, --data <DATA>                        Post body data for the request.
   -c, --cookies <COOKIES>                  Extra Cookies to add to the request.
