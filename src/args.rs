@@ -7,10 +7,10 @@ pub struct Args {
     #[arg(short, long, required_unless_present = "url", help = "Path to request file.")]
     pub request: Option<PathBuf>,
 
-    #[arg(long, help = "URL to fuzz.")]
+    #[arg(long, help = "URL scheme to use, 'http', 'https'.")]
     pub scheme_override: Option<String>,
 
-    #[arg(short, long, required_unless_present = "request", help = "URL scheme to use, 'http', 'https'.")]
+    #[arg(short, long, required_unless_present = "request", help = "Url to fuzz.")]
     pub url: Option<String>,
     #[arg(short = 'X', long, required_unless_present = "request", help = "Method to use with the request URL.")]
     pub method: Option<String>,
@@ -36,7 +36,6 @@ pub struct Args {
     #[arg(help_heading = "Performance Settings")]
     #[arg(short = 'R', long, default_value_t = 20, help = "Max number of requests that can be sent at once.")]
     pub rate_limit: u8,
-    
 
     #[arg(help_heading = "Client Settings")]
     #[arg(short = 'k', long, help = "Skip SSL/TLS certificate validation.")]

@@ -46,6 +46,7 @@ pub fn build_status_message(
 
 pub async fn mutate_request(req: ParsedRequest, resolved_payloads: Arc<ResolvedPayloads>, args: &Args, pb: Arc<ProgressBar>) {
     //rate_limit implementation
+
     let semaphore = Arc::new(Semaphore::new(args.rate_limit as usize));
     
     //tokio channel with queue
@@ -139,6 +140,7 @@ pub async fn mutate_request(req: ParsedRequest, resolved_payloads: Arc<ResolvedP
                                 
                                 pb.inc(1);
                                 let res_status = response.0.status().to_string();
+                                let url = response.0.url().to_string();
                                 
                                 
                                 match response.0.status().as_u16() {
@@ -146,92 +148,92 @@ pub async fn mutate_request(req: ParsedRequest, resolved_payloads: Arc<ResolvedP
                                         one.fetch_add(1, Ordering::Relaxed);
                                         
                                         if verbose { 
-                                            pb.println(format!("[{}] {} ({}: {})", res_status.cyan(), response.1.cyan(), head.yellow(), value.yellow()));
+                                            pb.println(format!("[{}] {} ({}: {})", res_status.cyan(), url.cyan(), head.yellow(), value.yellow()));
                                         }
                                         
                                     },
                                     200..=202 => {
-                                        pb.println(format!("[{}] {} ({}: {})", res_status.bold().blink().bright_green(), response.1.bold().blink().bright_green(), head.bold().blink().bright_green(), value.bold().blink().bright_green()));
+                                        pb.println(format!("[{}] {} ({}: {})", res_status.bold().blink().bright_green(), url.bold().blink().bright_green(), head.bold().blink().bright_green(), value.bold().blink().bright_green()));
                                         two_oh_two.fetch_add(1, Ordering::Relaxed);
                                         
                                     }
                                     203..=226 => {
                                         other_two.fetch_add(1, Ordering::Relaxed);
                                         if verbose { 
-                                            pb.println(format!("[{}] {} ({}: {})", res_status.green(), response.1.cyan(), head.green(), value.green()));
+                                            pb.println(format!("[{}] {} ({}: {})", res_status.green(), url.cyan(), head.green(), value.green()));
                                         }
                                     },
                                     300 => {
                                         other_three.fetch_add(1, Ordering::Relaxed);
                                         if verbose { 
-                                            pb.println(format!("[{}] {} ({}: {})", res_status, response.1, head, value));
+                                            pb.println(format!("[{}] {} ({}: {})", res_status, url, head, value));
                                         }
                                     }
                                     301..=302 => {
                                         three_oh_one.fetch_add(1, Ordering::Relaxed);
                                         if verbose { 
-                                            pb.println(format!("[{}] {} ({}: {})", res_status.bright_yellow(), response.1.cyan(), head.bright_yellow(), value.bright_yellow()));
+                                            pb.println(format!("[{}] {} ({}: {})", res_status.bright_yellow(), url.cyan(), head.bright_yellow(), value.bright_yellow()));
                                         }
                                     },
                                     303..=308 => {
                                         other_three.fetch_add(1, Ordering::Relaxed);
                                         if verbose { 
-                                            pb.println(format!("[{}] {} ({}: {})", res_status.yellow(), response.1.cyan(), head.yellow(), value.yellow()));
+                                            pb.println(format!("[{}] {} ({}: {})", res_status.yellow(), url.cyan(), head.yellow(), value.yellow()));
                                         }
                                         
                                     },
                                     400 | 402 | 405..=499 => {
                                         other_four.fetch_add(1, Ordering::Relaxed);
                                         if verbose { 
-                                            pb.println(format!("[{}] {} ({}: {})", res_status.red(), response.1.red(), head.red(), value.red()));
+                                            pb.println(format!("[{}] {} ({}: {})", res_status.red(), url.red(), head.red(), value.red()));
                                         }
                                         
                                     },
                                     401 => {
                                         four_oh_one.fetch_add(1, Ordering::Relaxed);
                                         if verbose { 
-                                            pb.println(format!("[{}] {} ({}: {})", res_status.red(), response.1.red(), head.red(), value.red()));
+                                            pb.println(format!("[{}] {} ({}: {})", res_status.red(), url.red(), head.red(), value.red()));
                                         }
                                         
                                     },
                                     403 => {
                                         four_oh_three.fetch_add(1, Ordering::Relaxed);
                                         if verbose { 
-                                            pb.println(format!("[{}] {} ({}: {})", res_status.red(), response.1.red(), head.red(), value.red()));
+                                            pb.println(format!("[{}] {} ({}: {})", res_status.red(), url.red(), head.red(), value.red()));
                                         }
                                         
                                     },
                                     404 => {
                                         four_oh_four.fetch_add(1, Ordering::Relaxed);
                                         if verbose { 
-                                            pb.println(format!("[{}] {} ({}: {})", res_status.red(), response.1.red(), head.red(), value.red()));
+                                            pb.println(format!("[{}] {} ({}: {})", res_status.red(), url.red(), head.red(), value.red()));
                                         }
                                     },
                                     
                                     500..=501 => {
                                         other_five.fetch_add(1, Ordering::Relaxed);
                                         if verbose { 
-                                            pb.println(format!("[{}] {} ({}: {})", res_status.bright_red(), response.1.bright_red(), head.bright_red(), value.bright_red()));
+                                            pb.println(format!("[{}] {} ({}: {})", res_status.bright_red(), url.bright_red(), head.bright_red(), value.bright_red()));
                                         }
                                         
                                     },
                                     502..=504 => {
                                         five_two_four.fetch_add(1, Ordering::Relaxed);
                                         if verbose { 
-                                            pb.println(format!("[{}] {} ({}: {})", res_status.bold().blink().bright_red(), response.1.bold().blink().bright_red(), head.bold().blink().bright_red(), value.bold().blink().bright_red()));
+                                            pb.println(format!("[{}] {} ({}: {})", res_status.bold().blink().bright_red(), url.bold().blink().bright_red(), head.bold().blink().bright_red(), value.bold().blink().bright_red()));
                                         }
                                         
                                     },
                                     505..=511 => {
                                         other_five.fetch_add(1, Ordering::Relaxed);
                                         if verbose { 
-                                            pb.println(format!("[{}] {} ({}: {})", res_status, response.1, head, value));
+                                            pb.println(format!("[{}] {} ({}: {})", res_status, url, head, value));
                                         }
                                         
                                     },
                                     _ => {
                                         if verbose { 
-                                            pb.println(format!("[{}] {} ({}: {})", res_status, response.1, head, value))
+                                            pb.println(format!("[{}] {} ({}: {})", res_status, url, head, value))
                                         }
                                     }
                                 };
@@ -243,7 +245,7 @@ pub async fn mutate_request(req: ParsedRequest, resolved_payloads: Arc<ResolvedP
                                 ));
 
                                 if !log_path.as_os_str().is_empty() {
-                                    log_output_to_file(log_path, res_status, response.1, head, value);
+                                    log_output_to_file(log_path, res_status, url, head, value);
                                 }
                                 
                                 

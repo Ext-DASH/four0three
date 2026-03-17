@@ -30,10 +30,10 @@ pub async fn print_init_and_status(req: &ParsedRequest, args: &Args) {
 |  _|| | | || | | || | |_|| ||| || |  | | | || | |_|| ___| ___/
 | |  | |_| || |_| || |    | |_| || |_ | | | || |    | \__| \__
 |_|   \___/  \__,_||_|     \___/  \__||_| |_||_|     \___\\___\
-ver 1.0        ExtDASH https://github.com/Ext-DASH/four0three/
+ver 1.2         ExtDASH https://github.com/Ext-DASH/four0three/
 Based on BypassFuzzer.py but written in rust.
-Payload credits:        intrudier https://github.com/intrudir/
-──────────────────────────────────────────────────────────────
+Payload credits:         intrudier https://github.com/intrudir/
+───────────────────────────────────────────────────────────────
 Target:              │ {target}
 Threads:             │ {threads}
 Insecure:            │ {insecure}
@@ -41,7 +41,7 @@ Max Queue Size:      │ {queue}
 Rate Limit:          | {rate}
 Proxy:               │ {proxy}
 Response Filer:      | 200, 201, 202
-──────────────────────────────────────────────────────────────
+───────────────────────────────────────────────────────────────
 "#);
     println!("Checking status of host...");
     match reqwest::get(target).await {
