@@ -7,10 +7,9 @@ pub struct Args {
     #[arg(short, long, required_unless_present = "url", help = "Path to request file.")]
     pub request: Option<PathBuf>,
 
-    #[arg(long, help = "URL scheme to use, 'http', 'https'.")]
+    #[arg(long, help = "URL to fuzz.")]
     pub scheme_override: Option<String>,
 
-    //implement --url, --method, --data, --cookies, --header
     #[arg(short, long, required_unless_present = "request", help = "URL scheme to use, 'http', 'https'.")]
     pub url: Option<String>,
     #[arg(short = 'X', long, required_unless_present = "request", help = "Method to use with the request URL.")]
@@ -31,14 +30,12 @@ pub struct Args {
     pub threads: u8,
 
     #[arg(help_heading = "Performance Settings")]
-    #[arg(long, default_value_t = 100, help = "Limit the max number of requests waiting to be processed by a thread. Higher numbers increase memory consumption for better performance. [ Low: 5, High: 50 ]")]
-    pub queue_size: u16, //need to check limit, must be lower than something but not sure what. needs testing.
+    #[arg(long, default_value_t = 25, help = "Limit the max number of requests waiting to be processed by a thread. Higher numbers increase memory consumption for better performance. [ Low: 5, High: 50 ]")]
+    pub queue_size: u16,
 
     #[arg(help_heading = "Performance Settings")]
     #[arg(short = 'R', long, default_value_t = 20, help = "Max number of requests that can be sent at once.")]
     pub rate_limit: u8,
-
-    //should be renamed to scheme
     
 
     #[arg(help_heading = "Client Settings")]
