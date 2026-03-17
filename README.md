@@ -3,7 +3,7 @@
 four0three is a 401/403 bypass fuzzer built based on BypassFuzzer.py, but written in rust.
 credits: intrudier https://github.com/intrudir/
 
-It has many feautres including that it goes brrrrr.
+It goes brrrr.
 
 ### Usage:
 
